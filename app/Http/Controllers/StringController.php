@@ -46,13 +46,13 @@ class StringController extends Controller
         $record = AnalyzedString::create([
             'value' => $value,
             'sha256_hash' => $hash,
-            'properties' => json_encode($properties), // Ensure JSON for SQLite
+            'properties' => $properties,// json_encode(), // Ensure JSON for SQLite
         ]);
 
         return response()->json([
             'id' => $hash,
             'value' => $value,
-            'properties' => json_decode($record->properties, true),//$properties,
+            'properties' => $record->properties,//json_decode($record->properties, true),
             'created_at' => $record->created_at->toIso8601String(),
         ], 201);
     }
@@ -97,7 +97,7 @@ class StringController extends Controller
         $containsCharacter = $request->query('contains_character');
 
         // Retrieve all stored strings from the database
-        $strings = \App\Models\AnalyzedString::all(); // Replace with your actual model name
+        $strings = AnalyzedString::all(); // Replace with your actual model name
 
         // Apply filters
         $filtered = $strings->filter(function ($string) use ($isPalindrome, $minLength, $maxLength, $wordCount, $containsCharacter) {
@@ -214,7 +214,7 @@ class StringController extends Controller
     }
 
     // Get all records first and then filter in PHP
-    $allStrings = \App\Models\AnalyzedString::all();
+    $allStrings = AnalyzedString::all();
 
     $filtered = $allStrings->filter(function ($string) use ($parsedFilters) {
         $properties = is_string($string->properties)
@@ -351,72 +351,72 @@ class StringController extends Controller
         ], 200);
     }
 
-private function parseNaturalLanguageQuery(string $text): ?array
-{
-    $text = strtolower(trim($text));
-    $filters = [];
+    private function parseNaturalLanguageQuery(string $text): ?array
+    {
+        $text = strtolower(trim($text));
+        $filters = [];
 
-    // Word count: "single word", "one word", "two word", "three word", etc.
-    if (preg_match('/\b(single|one)\s+word\b/', $text)) {
-        $filters['word_count'] = 1;
-    } elseif (preg_match('/\btwo\s+word\b/', $text)) {
-        $filters['word_count'] = 2;
-    } elseif (preg_match('/\bthree\s+word\b/', $text)) {
-        $filters['word_count'] = 3;
-    }
+        // Word count: "single word", "one word", "two word", "three word", etc.
+        if (preg_match('/\b(single|one)\s+word\b/', $text)) {
+            $filters['word_count'] = 1;
+        } elseif (preg_match('/\btwo\s+word\b/', $text)) {
+            $filters['word_count'] = 2;
+        } elseif (preg_match('/\bthree\s+word\b/', $text)) {
+            $filters['word_count'] = 3;
+        }
 
-    // Palindrome detection
-    if (preg_match('/\b(palindromic|palindrome)\b/', $text)) {
-        $filters['is_palindrome'] = true;
-    }
+        // Palindrome detection
+        if (preg_match('/\b(palindromic|palindrome)\b/', $text)) {
+            $filters['is_palindrome'] = true;
+        }
 
-    // String length: "longer than X", "shorter than Y", "greater than X", "less than Y"
-    if (preg_match('/(longer|greater) than (\d+)/', $text, $matches)) {
-        $filters['min_length'] = (int)$matches[2] + 1;
-    }
+        // String length: "longer than X", "shorter than Y", "greater than X", "less than Y"
+        if (preg_match('/(longer|greater) than (\d+)/', $text, $matches)) {
+            $filters['min_length'] = (int)$matches[2] + 1;
+        }
 
-    if (preg_match('/(shorter|less) than (\d+)/', $text, $matches)) {
-        $filters['max_length'] = (int)$matches[2] - 1;
-    }
+        if (preg_match('/(shorter|less) than (\d+)/', $text, $matches)) {
+            $filters['max_length'] = (int)$matches[2] - 1;
+        }
 
-    // Contains character patterns
-    if (preg_match('/containing the letter ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/contain the letter ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/containing letter ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/contain letter ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/containing the character ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/contain the character ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/containing character ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    } elseif (preg_match('/contain character ([a-z])/', $text, $matches)) {
-        $filters['contains_character'] = $matches[1];
-    }
+        // Contains character patterns
+        if (preg_match('/containing the letter ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/contain the letter ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/containing letter ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/contain letter ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/containing the character ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/contain the character ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/containing character ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        } elseif (preg_match('/contain character ([a-z])/', $text, $matches)) {
+            $filters['contains_character'] = $matches[1];
+        }
 
-    // First vowel heuristic
-    if (preg_match('/\bfirst vowel\b/', $text) || preg_match('/\bthe first vowel\b/', $text)) {
-        $filters['contains_character'] = 'a'; // Using 'a' as the first vowel heuristic
-    }
+        // First vowel heuristic
+        if (preg_match('/\bfirst vowel\b/', $text) || preg_match('/\bthe first vowel\b/', $text)) {
+            $filters['contains_character'] = 'a'; // Using 'a' as the first vowel heuristic
+        }
 
-    // Check for conflicting filters
-    if (isset($filters['min_length'], $filters['max_length']) 
-        && $filters['min_length'] > $filters['max_length']) {
-        $filters['conflict'] = true;
+        // Check for conflicting filters
+        if (isset($filters['min_length'], $filters['max_length']) 
+            && $filters['min_length'] > $filters['max_length']) {
+            $filters['conflict'] = true;
+            return $filters;
+        }
+
+        // If no filters were matched, return null
+        if (empty($filters)) {
+            return null;
+        }
+
         return $filters;
     }
-
-    // If no filters were matched, return null
-    if (empty($filters)) {
-        return null;
-    }
-
-    return $filters;
-}
     public function filterByNaturalLanguageOld(Request $request)
 {
     $query = $request->query('query', '');
