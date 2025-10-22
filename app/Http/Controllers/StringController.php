@@ -52,7 +52,7 @@ class StringController extends Controller
         return response()->json([
             'id' => $hash,
             'value' => $value,
-            'properties' => $properties,
+            'properties' => json_decode($record->properties, true),//$properties,
             'created_at' => $record->created_at->toIso8601String(),
         ], 201);
     }
@@ -283,73 +283,73 @@ class StringController extends Controller
     ], 200);
 }
     public function filterByNaturalLanguage1(Request $request)
-{
-    $query = $request->query('query', '');
+    {
+        $query = $request->query('query', '');
 
-    if (empty($query)) {
+        if (empty($query)) {
+            return response()->json([
+                'error' => 'Missing "query" parameter'
+            ], 400);
+        }
+
+        $parsedFilters = $this->parseNaturalLanguageQuery($query);
+        
+        if ($parsedFilters === null) {
+            return response()->json([
+                'error' => 'Unable to parse natural language query'
+            ], 400);
+        }
+
+        // Check for conflicting filters
+        if (isset($parsedFilters['conflict']) && $parsedFilters['conflict'] === true) {
+            return response()->json([
+                'error' => 'Query parsed but resulted in conflicting filters'
+            ], 422);
+        }
+
+        // Apply filters to the database
+        $queryBuilder = \App\Models\AnalyzedString::query();
+
+        if (isset($parsedFilters['is_palindrome'])) {
+            $queryBuilder->whereRaw("json_extract(properties, '$.is_palindrome') = ?", [$parsedFilters['is_palindrome'] ? 'true' : 'false']);
+        }
+
+        if (isset($parsedFilters['min_length'])) {
+            $queryBuilder->whereRaw('LENGTH(value) >= ?', [$parsedFilters['min_length']]);
+        }
+
+        if (isset($parsedFilters['max_length'])) {
+            $queryBuilder->whereRaw('LENGTH(value) <= ?', [$parsedFilters['max_length']]);
+        }
+
+        if (isset($parsedFilters['word_count'])) {
+            $queryBuilder->whereRaw('(LENGTH(value) - LENGTH(REPLACE(value, " ", "")) + 1) = ?', [$parsedFilters['word_count']]);
+        }
+
+        if (isset($parsedFilters['contains_character'])) {
+            $queryBuilder->whereRaw('LOWER(value) LIKE ?', ['%' . strtolower($parsedFilters['contains_character']) . '%']);
+        }
+
+        $results = $queryBuilder->get();
+
         return response()->json([
-            'error' => 'Missing "query" parameter'
-        ], 400);
+            'data' => $results->map(function ($item) {
+                return [
+                    'id' => $item->sha256_hash,
+                    'value' => $item->value,
+                    'properties' => is_string($item->properties)
+                        ? json_decode($item->properties, true)
+                        : $item->properties,
+                    'created_at' => $item->created_at->toIso8601String(),
+                ];
+            })->values(),
+            'count' => $results->count(),
+            'interpreted_query' => [
+                'original' => $request->query('query'),
+                'parsed_filters' => $parsedFilters,
+            ],
+        ], 200);
     }
-
-    $parsedFilters = $this->parseNaturalLanguageQuery($query);
-    
-    if ($parsedFilters === null) {
-        return response()->json([
-            'error' => 'Unable to parse natural language query'
-        ], 400);
-    }
-
-    // Check for conflicting filters
-    if (isset($parsedFilters['conflict']) && $parsedFilters['conflict'] === true) {
-        return response()->json([
-            'error' => 'Query parsed but resulted in conflicting filters'
-        ], 422);
-    }
-
-    // Apply filters to the database
-    $queryBuilder = \App\Models\AnalyzedString::query();
-
-    if (isset($parsedFilters['is_palindrome'])) {
-        $queryBuilder->whereRaw("json_extract(properties, '$.is_palindrome') = ?", [$parsedFilters['is_palindrome'] ? 'true' : 'false']);
-    }
-
-    if (isset($parsedFilters['min_length'])) {
-        $queryBuilder->whereRaw('LENGTH(value) >= ?', [$parsedFilters['min_length']]);
-    }
-
-    if (isset($parsedFilters['max_length'])) {
-        $queryBuilder->whereRaw('LENGTH(value) <= ?', [$parsedFilters['max_length']]);
-    }
-
-    if (isset($parsedFilters['word_count'])) {
-        $queryBuilder->whereRaw('(LENGTH(value) - LENGTH(REPLACE(value, " ", "")) + 1) = ?', [$parsedFilters['word_count']]);
-    }
-
-    if (isset($parsedFilters['contains_character'])) {
-        $queryBuilder->whereRaw('LOWER(value) LIKE ?', ['%' . strtolower($parsedFilters['contains_character']) . '%']);
-    }
-
-    $results = $queryBuilder->get();
-
-    return response()->json([
-        'data' => $results->map(function ($item) {
-            return [
-                'id' => $item->sha256_hash,
-                'value' => $item->value,
-                'properties' => is_string($item->properties)
-                    ? json_decode($item->properties, true)
-                    : $item->properties,
-                'created_at' => $item->created_at->toIso8601String(),
-            ];
-        })->values(),
-        'count' => $results->count(),
-        'interpreted_query' => [
-            'original' => $request->query('query'),
-            'parsed_filters' => $parsedFilters,
-        ],
-    ], 200);
-}
 
 private function parseNaturalLanguageQuery(string $text): ?array
 {
