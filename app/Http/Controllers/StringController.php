@@ -198,6 +198,235 @@ class StringController extends Controller
         ], 400);
     }
 
+    $parsedFilters = $this->parseNaturalLanguageQuery($query);
+    
+    if ($parsedFilters === null) {
+        return response()->json([
+            'error' => 'Unable to parse natural language query'
+        ], 400);
+    }
+
+    // Check for conflicting filters
+    if (isset($parsedFilters['conflict']) && $parsedFilters['conflict'] === true) {
+        return response()->json([
+            'error' => 'Query parsed but resulted in conflicting filters'
+        ], 422);
+    }
+
+    // Get all records first and then filter in PHP
+    $allStrings = \App\Models\AnalyzedString::all();
+
+    $filtered = $allStrings->filter(function ($string) use ($parsedFilters) {
+        $properties = is_string($string->properties)
+            ? json_decode($string->properties, true)
+            : $string->properties;
+
+        // Check palindrome filter
+        if (isset($parsedFilters['is_palindrome'])) {
+            $isPalindrome = $properties['is_palindrome'] ?? false;
+            if ($isPalindrome !== $parsedFilters['is_palindrome']) {
+                return false;
+            }
+        }
+
+        // Check min length filter
+        if (isset($parsedFilters['min_length'])) {
+            $length = strlen($string->value);
+            if ($length < $parsedFilters['min_length']) {
+                return false;
+            }
+        }
+
+        // Check max length filter
+        if (isset($parsedFilters['max_length'])) {
+            $length = strlen($string->value);
+            if ($length > $parsedFilters['max_length']) {
+                return false;
+            }
+        }
+
+        // Check word count filter
+        if (isset($parsedFilters['word_count'])) {
+            $wordCount = $properties['word_count'] ?? str_word_count($string->value);
+            if ($wordCount !== $parsedFilters['word_count']) {
+                return false;
+            }
+        }
+
+        // Check contains character filter
+        if (isset($parsedFilters['contains_character'])) {
+            $containsChar = stripos($string->value, $parsedFilters['contains_character']) !== false;
+            if (!$containsChar) {
+                return false;
+            }
+        }
+
+        return true;
+    });
+
+    return response()->json([
+        'data' => $filtered->map(function ($item) {
+            return [
+                'id' => $item->sha256_hash,
+                'value' => $item->value,
+                'properties' => is_string($item->properties)
+                    ? json_decode($item->properties, true)
+                    : $item->properties,
+                'created_at' => $item->created_at->toIso8601String(),
+            ];
+        })->values(),
+        'count' => $filtered->count(),
+        'interpreted_query' => [
+            'original' => $request->query('query'),
+            'parsed_filters' => $parsedFilters,
+        ],
+    ], 200);
+}
+    public function filterByNaturalLanguage1(Request $request)
+{
+    $query = $request->query('query', '');
+
+    if (empty($query)) {
+        return response()->json([
+            'error' => 'Missing "query" parameter'
+        ], 400);
+    }
+
+    $parsedFilters = $this->parseNaturalLanguageQuery($query);
+    
+    if ($parsedFilters === null) {
+        return response()->json([
+            'error' => 'Unable to parse natural language query'
+        ], 400);
+    }
+
+    // Check for conflicting filters
+    if (isset($parsedFilters['conflict']) && $parsedFilters['conflict'] === true) {
+        return response()->json([
+            'error' => 'Query parsed but resulted in conflicting filters'
+        ], 422);
+    }
+
+    // Apply filters to the database
+    $queryBuilder = \App\Models\AnalyzedString::query();
+
+    if (isset($parsedFilters['is_palindrome'])) {
+        $queryBuilder->whereRaw("json_extract(properties, '$.is_palindrome') = ?", [$parsedFilters['is_palindrome'] ? 'true' : 'false']);
+    }
+
+    if (isset($parsedFilters['min_length'])) {
+        $queryBuilder->whereRaw('LENGTH(value) >= ?', [$parsedFilters['min_length']]);
+    }
+
+    if (isset($parsedFilters['max_length'])) {
+        $queryBuilder->whereRaw('LENGTH(value) <= ?', [$parsedFilters['max_length']]);
+    }
+
+    if (isset($parsedFilters['word_count'])) {
+        $queryBuilder->whereRaw('(LENGTH(value) - LENGTH(REPLACE(value, " ", "")) + 1) = ?', [$parsedFilters['word_count']]);
+    }
+
+    if (isset($parsedFilters['contains_character'])) {
+        $queryBuilder->whereRaw('LOWER(value) LIKE ?', ['%' . strtolower($parsedFilters['contains_character']) . '%']);
+    }
+
+    $results = $queryBuilder->get();
+
+    return response()->json([
+        'data' => $results->map(function ($item) {
+            return [
+                'id' => $item->sha256_hash,
+                'value' => $item->value,
+                'properties' => is_string($item->properties)
+                    ? json_decode($item->properties, true)
+                    : $item->properties,
+                'created_at' => $item->created_at->toIso8601String(),
+            ];
+        })->values(),
+        'count' => $results->count(),
+        'interpreted_query' => [
+            'original' => $request->query('query'),
+            'parsed_filters' => $parsedFilters,
+        ],
+    ], 200);
+}
+
+private function parseNaturalLanguageQuery(string $text): ?array
+{
+    $text = strtolower(trim($text));
+    $filters = [];
+
+    // Word count: "single word", "one word", "two word", "three word", etc.
+    if (preg_match('/\b(single|one)\s+word\b/', $text)) {
+        $filters['word_count'] = 1;
+    } elseif (preg_match('/\btwo\s+word\b/', $text)) {
+        $filters['word_count'] = 2;
+    } elseif (preg_match('/\bthree\s+word\b/', $text)) {
+        $filters['word_count'] = 3;
+    }
+
+    // Palindrome detection
+    if (preg_match('/\b(palindromic|palindrome)\b/', $text)) {
+        $filters['is_palindrome'] = true;
+    }
+
+    // String length: "longer than X", "shorter than Y", "greater than X", "less than Y"
+    if (preg_match('/(longer|greater) than (\d+)/', $text, $matches)) {
+        $filters['min_length'] = (int)$matches[2] + 1;
+    }
+
+    if (preg_match('/(shorter|less) than (\d+)/', $text, $matches)) {
+        $filters['max_length'] = (int)$matches[2] - 1;
+    }
+
+    // Contains character patterns
+    if (preg_match('/containing the letter ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/contain the letter ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/containing letter ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/contain letter ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/containing the character ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/contain the character ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/containing character ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    } elseif (preg_match('/contain character ([a-z])/', $text, $matches)) {
+        $filters['contains_character'] = $matches[1];
+    }
+
+    // First vowel heuristic
+    if (preg_match('/\bfirst vowel\b/', $text) || preg_match('/\bthe first vowel\b/', $text)) {
+        $filters['contains_character'] = 'a'; // Using 'a' as the first vowel heuristic
+    }
+
+    // Check for conflicting filters
+    if (isset($filters['min_length'], $filters['max_length']) 
+        && $filters['min_length'] > $filters['max_length']) {
+        $filters['conflict'] = true;
+        return $filters;
+    }
+
+    // If no filters were matched, return null
+    if (empty($filters)) {
+        return null;
+    }
+
+    return $filters;
+}
+    public function filterByNaturalLanguageOld(Request $request)
+{
+    $query = $request->query('query', '');
+
+    if (empty($query)) {
+        return response()->json([
+            'error' => 'Missing "query" parameter'
+        ], 400);
+    }
+
     $queryLower = strtolower($query);
     $filters = [];
 
@@ -267,7 +496,7 @@ class StringController extends Controller
 }
 
 
-    private function parseNaturalLanguageQuery(string $text): ?array
+    private function parseNaturalLanguageQueryOld(string $text): ?array
     {
         $text = strtolower(trim($text));
         $filters = [];
